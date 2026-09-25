@@ -17,6 +17,22 @@ from src.features import compute_pairwise_features
 from src.train_matcher import EntityMatcher, FEATURE_COLUMNS
 from src.decide import apply_precision_first_policy
 
+def find_source1_file(provided_path: str = None) -> str:
+    if provided_path and os.path.exists(provided_path):
+        return provided_path
+    candidates = [
+        "test_data/test_source1 (1).tsv",
+        "test_data/test_source1.tsv",
+        "test_source1 (1).tsv",
+        "test_source1.tsv",
+        "artifacts/splits/rapid_eval_s1.tsv",
+        "train_source1.tsv"
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    return None
+
 def get_default_db() -> str:
     candidates = [
         "D:/hackathon/test_dataset.db",
@@ -72,13 +88,30 @@ def run_part(
     print(f"Model File:   {model_path}")
     print(f"Partition:    Part {part_num} of {total_parts}")
 
-    if not os.path.exists(input_file):
-        print(f"Error: Input file '{input_file}' not found!")
+    actual_input = find_source1_file(input_file)
+    if not actual_input:
+        print(f"\n[ERROR] Test file '{input_file}' nahi mili!")
+        print("-" * 60)
+        print("Karan: Large data files (.tsv) GitHub par upload nahi hoti hain.")
+        print("Samadhan: Pehle laptop se 'test_data' folder ko copy karke")
+        print("is laptop ke 'amazon-ml-hackathon/test_data' folder me daal dein.")
+        print("Ya 'test_source1 (1).tsv' ko directly project folder me paste karein.")
+        print("-" * 60)
         sys.exit(1)
+    input_file = actual_input
+
     if not os.path.exists(db_path):
-        print(f"Error: Database file '{db_path}' not found!")
-        print("Tip: Run 'python scripts/build_test_db.py' or check DB path.")
-        sys.exit(1)
+        fallback_db = get_default_db()
+        if os.path.exists(fallback_db):
+            db_path = fallback_db
+        else:
+            print(f"\n[ERROR] Database file '{db_path}' nahi mili!")
+            print("-" * 60)
+            print("Kripya pehle laptop se 'dataset.db' ya 'test_dataset.db' ko")
+            print("is laptop ke project folder me copy karein.")
+            print("-" * 60)
+            sys.exit(1)
+
     if not os.path.exists(model_path):
         print(f"Error: Model file '{model_path}' not found!")
         sys.exit(1)
