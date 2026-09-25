@@ -73,6 +73,7 @@ class DiskBTreeBlocker:
             ncc_leet = to_leet(ncc_unaccent)
             ncc_extra = clean_extra_legal(ncc)
 
+            seen_cands = set()
             for tbl, src_name in [("source2", "S2"), ("source3", "S3")]:
                 query = f"""
                     SELECT entity_id, business_name, business_address, 
@@ -164,8 +165,11 @@ class DiskBTreeBlocker:
                 matches = cur.fetchall()
 
 
-                for row in matches[:self.max_cands_per_query]:
+                for row in matches:
                     tid = row[0]
+                    if tid in seen_cands:
+                        continue
+                    seen_cands.add(tid)
                     channel = row[10]
                     cand_info = {
                         "entity_id": tid,
@@ -190,6 +194,8 @@ class DiskBTreeBlocker:
                         "channel_count": 1,
                         "cand_record": cand_info
                     })
+                    if len(seen_cands) >= self.max_cands_per_query:
+                        break
 
         return all_candidates
 

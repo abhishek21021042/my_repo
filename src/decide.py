@@ -73,14 +73,17 @@ def apply_precision_first_policy(
             is_strong_addr = (addr_jw >= 0.85 or postal_match == 1.0 or (addr_jaccard >= 0.35 and nums_jaccard > 0.0))
             active_thresh = strong_addr_threshold if is_strong_addr else threshold
 
+            cid = row["candidate_entity_id"]
             if prob >= active_thresh:
-                accepted.append(row["candidate_entity_id"])
+                if cid not in accepted:
+                    accepted.append(cid)
                 if top_prob == 0.0:
                     top_prob = prob
             elif top_prob > 0.0:
                 # Multi-match candidates with positive evidence
                 if prob >= 0.82 and prob >= (top_prob - 0.15) and is_strong_addr:
-                    accepted.append(row["candidate_entity_id"])
+                    if cid not in accepted:
+                        accepted.append(cid)
 
         # --- MARGIN & AMBIGUITY CHECK (PRD 12.7) ---
         if len(sorted_group) >= 2:
