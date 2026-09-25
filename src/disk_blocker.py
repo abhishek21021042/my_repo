@@ -54,7 +54,13 @@ class DiskBTreeBlocker:
     def __init__(self, db_path: str = DEFAULT_DB_PATH, max_cands_per_query: int = 150):
         self.db_path = db_path
         self.max_cands_per_query = max_cands_per_query
-        self.conn = sqlite3.connect(self.db_path)
+        try:
+            # Supports read-only cloud mounts like /kaggle/input without creating lock files
+            abs_path = os.path.abspath(self.db_path).replace("\\", "/")
+            uri_path = f"file:{abs_path}?mode=ro&immutable=1"
+            self.conn = sqlite3.connect(uri_path, uri=True)
+        except Exception:
+            self.conn = sqlite3.connect(self.db_path)
 
     def retrieve_candidates(self, s1_records: List[Dict]) -> List[Dict]:
         cur = self.conn.cursor()

@@ -4,7 +4,8 @@ import time
 import argparse
 import sqlite3
 import pandas as pd
-from typing import Dict, List, Set
+from concurrent.futures import ProcessPoolExecutor
+from typing import Dict, List, Set, Tuple
 
 sys.path.insert(0, os.path.abspath("."))
 from src.io_utils import read_tsv
@@ -69,204 +70,31 @@ def extract_addr_tok1(addr_clean: str) -> str:
             return w
     return words[0] if words else ""
 
-def run_part(
-    input_file: str,
-    db_path: str,
-    model_path: str,
-    part_num: int,
-    total_parts: int,
-    start_row: int = None,
-    end_row: int = None,
-    batch_size: int = 1000,
-    output_dir: str = "output"
-):
-    print("=" * 80)
-    print("=== DISTRIBUTED ENTITY RESOLUTION RUNNER ===")
-    print("=" * 80)
-    print(f"Input File:   {input_file}")
-    print(f"Database:     {db_path}")
-    print(f"Model File:   {model_path}")
-    print(f"Partition:    Part {part_num} of {total_parts}")
+# Worker state
+_worker_blocker = None
+_worker_matcher = None
 
-    actual_input = find_source1_file(input_file)
-    if not actual_input:
-        print(f"\n[ERROR] Test file '{input_file}' nahi mili!")
-        print("-" * 60)
-        print("Karan: Large data files (.tsv) GitHub par upload nahi hoti hain.")
-        print("Samadhan: Pehle laptop se 'test_data' folder ko copy karke")
-        print("is laptop ke 'amazon-ml-hackathon/test_data' folder me daal dein.")
-        print("Ya 'test_source1 (1).tsv' ko directly project folder me paste karein.")
-        print("-" * 60)
-        sys.exit(1)
-    input_file = actual_input
+def init_worker(db_path: str, model_path: str):
+    global _worker_blocker, _worker_matcher
+    _worker_matcher = EntityMatcher.load(model_path)
+    _worker_blocker = DiskBTreeBlocker(db_path=db_path, max_cands_per_query=150)
 
-    if not os.path.exists(db_path):
-        fallback_db = get_default_db()
-        if os.path.exists(fallback_db):
-            db_path = fallback_db
-        else:
-            print(f"\n[ERROR] Database file '{db_path}' nahi mili!")
-            print("-" * 60)
-            print("Kripya pehle laptop se 'dataset.db' ya 'test_dataset.db' ko")
-            print("is laptop ke project folder me copy karein.")
-            print("-" * 60)
-            sys.exit(1)
+def worker_process_chunk(records: List[Dict]) -> Tuple[List[tuple], List[str]]:
+    global _worker_blocker, _worker_matcher
+    if not records:
+        return [], []
 
-    if not os.path.exists(model_path):
-        print(f"Error: Model file '{model_path}' not found!")
-        sys.exit(1)
-
-    # 1. Calculate row boundaries
-    print("\nReading input file metadata...")
-    total_file_rows = sum(1 for _ in open(input_file, "r", encoding="utf-8")) - 1 # exclude header
-    print(f"Total rows in {input_file}: {total_file_rows:,}")
-
-    if start_row is None or end_row is None:
-        chunk_size = (total_file_rows + total_parts - 1) // total_parts
-        start_row = (part_num - 1) * chunk_size
-        end_row = min(start_row + chunk_size, total_file_rows)
-
-    part_total = end_row - start_row
-    print(f"This Laptop will process Rows: {start_row:,} to {end_row:,} ({part_total:,} records).")
-
-    # 2. Output file setup (exact Ground Truth format)
-    os.makedirs(output_dir, exist_ok=True)
-    out_tsv = os.path.join(output_dir, f"matching_results_part_{part_num}_of_{total_parts}.tsv")
-    cand_tsv = os.path.join(output_dir, f"candidate_pairs_part_{part_num}_of_{total_parts}.tsv")
-
-    # Check for existing progress (Auto-resume feature)
-    processed_eids = set()
-    if os.path.exists(out_tsv):
-        with open(out_tsv, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-            if len(lines) > 1:
-                for line in lines[1:]:
-                    parts = line.strip().split("\t")
-                    if parts and parts[0]:
-                        processed_eids.add(parts[0])
-        print(f"Resuming: Found {len(processed_eids):,} previously processed records in {out_tsv}.")
-    else:
-        # Write header
-        with open(out_tsv, "w", encoding="utf-8") as f:
-            f.write("source1_entity_id\tmatched_entity_ids\n")
-        with open(cand_tsv, "w", encoding="utf-8") as f:
-            f.write("source1_entity_id\tcandidate_entity_id\n")
-
-    # 3. Load matcher & blocker
-    print("\nInitializing Matcher & Blocker...")
-    matcher = EntityMatcher.load(model_path)
-    blocker = DiskBTreeBlocker(db_path=db_path, max_cands_per_query=150)
-
-    # 4. Stream and process the allocated chunk in batches
-    print(f"\nStarting Inference on Part {part_num}/{total_parts}...")
-    t_start = time.time()
-    batch = []
-    current_row_idx = 0
-    total_processed_now = len(processed_eids)
-    total_matches_found = 0
-
-    with open(input_file, "r", encoding="utf-8") as f:
-        header = f.readline().strip().split("\t")
-        eid_idx = header.index("entity_id") if "entity_id" in header else 0
-        name_idx = header.index("business_name") if "business_name" in header else 1
-        addr_idx = header.index("business_address") if "business_address" in header else 2
-        cntry_idx = header.index("country") if "country" in header else 3
-
-        for line in f:
-            if current_row_idx < start_row:
-                current_row_idx += 1
-                continue
-            if current_row_idx >= end_row:
-                break
-
-            current_row_idx += 1
-            fields = line.rstrip("\r\n").split("\t")
-            if len(fields) <= eid_idx: continue
-
-            eid = fields[eid_idx].strip()
-            if eid in processed_eids:
-                continue
-
-            name = fields[name_idx].strip() if len(fields) > name_idx else ""
-            addr = fields[addr_idx].strip() if len(fields) > addr_idx else ""
-            country = fields[cntry_idx].strip() if len(fields) > cntry_idx else ""
-
-            # Prepare normalized record
-            n_clean = normalize_text(name)
-            n_core = remove_legal_suffixes(n_clean)
-            n_compact = normalize_compact(name)
-            n_core_compact = normalize_compact(n_core)
-            n_sorted = sort_tokens(n_core)
-            a_clean = normalize_text(addr)
-            postal = extract_postal_code(addr, country)
-            nums = extract_numbers(addr)
-
-            rec = {
-                "entity_id": eid,
-                "business_name": name,
-                "business_address": addr,
-                "country": country,
-                "name_clean": n_clean,
-                "name_compact": n_compact,
-                "name_core_compact": n_core_compact,
-                "name_no_legal": n_core,
-                "name_sorted": n_sorted,
-                "address_clean": a_clean,
-                "postal_code": postal,
-                "numbers": nums,
-                "addr_anchor": extract_addr_anchor(a_clean),
-                "tok1": extract_tok1(n_clean),
-                "addr_tok1": extract_addr_tok1(a_clean)
-            }
-            batch.append(rec)
-
-            if len(batch) >= batch_size:
-                matches_in_batch = process_batch(batch, blocker, matcher, out_tsv, cand_tsv)
-                total_matches_found += matches_in_batch
-                total_processed_now += len(batch)
-                elapsed = time.time() - t_start
-                rate = total_processed_now / elapsed if elapsed > 0 else 0
-                pct = (total_processed_now / part_total) * 100
-                rem_sec = (part_total - total_processed_now) / rate if rate > 0 else 0
-                print(f"[{pct:5.1f}%] Processed {total_processed_now:,}/{part_total:,} | Matches: {total_matches_found:,} | Speed: {rate:.1f} rec/s | ETA: {rem_sec/60:.1f}m")
-                batch = []
-
-    # Final remaining batch
-    if batch:
-        matches_in_batch = process_batch(batch, blocker, matcher, out_tsv, cand_tsv)
-        total_matches_found += matches_in_batch
-        total_processed_now += len(batch)
-
-    blocker.close()
-    elapsed_total = time.time() - t_start
-    print("\n" + "=" * 80)
-    print(f"=== PART {part_num}/{total_parts} COMPLETED IN {elapsed_total/60:.1f} MINUTES ===")
-    print(f"  Records Processed: {total_processed_now:,} / {part_total:,}")
-    print(f"  Matches Found:     {total_matches_found:,}")
-    print(f"  Results Saved To:  {out_tsv}")
-    print(f"  Candidates Saved:  {cand_tsv}")
-    print("=" * 80)
-
-def process_batch(
-    batch: List[Dict],
-    blocker: DiskBTreeBlocker,
-    matcher: EntityMatcher,
-    out_tsv_path: str,
-    cand_tsv_path: str
-) -> int:
-    # 1. Retrieve candidates
-    candidates = blocker.retrieve_candidates(batch)
-    s1_dict = {r["entity_id"]: r for r in batch}
-
-    predictions = {r["entity_id"]: [] for r in batch}
-    cand_pairs_to_write = []
+    candidates = _worker_blocker.retrieve_candidates(records)
+    s1_dict = {r["entity_id"]: r for r in records}
+    predictions = {r["entity_id"]: [] for r in records}
+    cand_lines = []
 
     if candidates:
         feat_rows = []
         for c in candidates:
             s1_id = c["source1_entity_id"]
             cid = c["candidate_entity_id"]
-            cand_pairs_to_write.append(f"{s1_id}\t{cid}\n")
+            cand_lines.append(f"{s1_id}\t{cid}\n")
             f_vec = compute_pairwise_features(s1_dict[s1_id], c["cand_record"], c)
             f_vec["source1_entity_id"] = s1_id
             f_vec["candidate_entity_id"] = cid
@@ -274,7 +102,7 @@ def process_batch(
 
         if feat_rows:
             feat_df = pd.DataFrame(feat_rows)
-            feat_df["probability"] = matcher.predict_proba(feat_df[FEATURE_COLUMNS].values)
+            feat_df["probability"] = _worker_matcher.predict_proba(feat_df[FEATURE_COLUMNS].values)
             preds_dict = apply_precision_first_policy(
                 feat_df,
                 threshold=0.93,
@@ -285,23 +113,228 @@ def process_batch(
             for eid, plist in preds_dict.items():
                 predictions[eid] = plist
 
-    # Append to output TSV in exact Ground Truth format
-    total_matches = 0
-    with open(out_tsv_path, "a", encoding="utf-8") as f_out:
-        for r in batch:
-            eid = r["entity_id"]
-            matched_list = predictions.get(eid, [])
-            matched_str = ",".join(matched_list) if matched_list else ""
-            if matched_list:
-                total_matches += len(matched_list)
-            f_out.write(f"{eid}\t{matched_str}\n")
+    results = []
+    for r in records:
+        eid = r["entity_id"]
+        matched_list = predictions.get(eid, [])
+        results.append((eid, ",".join(matched_list) if matched_list else ""))
 
-    # Append candidates
-    if cand_pairs_to_write:
-        with open(cand_tsv_path, "a", encoding="utf-8") as f_cand:
-            f_cand.writelines(cand_pairs_to_write)
+    return results, cand_lines
 
-    return total_matches
+def run_part(
+    input_file: str,
+    db_path: str,
+    model_path: str,
+    part_num: int,
+    total_parts: int,
+    start_row: int = None,
+    end_row: int = None,
+    batch_size: int = 2000,
+    workers: int = None,
+    output_dir: str = "output"
+):
+    if workers is None:
+        workers = max(1, os.cpu_count() or 4)
+
+    print("=" * 80)
+    print("=== HIGH-SPEED MULTI-CORE ENTITY RESOLUTION RUNNER ===")
+    print("=" * 80)
+    print(f"Input File:   {input_file}")
+    print(f"Database:     {db_path}")
+    print(f"Model File:   {model_path}")
+    print(f"Partition:    Part {part_num} of {total_parts}")
+    print(f"CPU Workers:  {workers} Parallel Cores Active")
+
+    actual_input = find_source1_file(input_file)
+    if not actual_input:
+        print(f"\n[ERROR] Test file '{input_file}' nahi mili!")
+        print("-" * 60)
+        print("Karan: Large data files (.tsv) GitHub par upload nahi hoti hain.")
+        print("Samadhan: Pehle laptop se 'test_data' folder ko copy karke")
+        print("is laptop ke 'test_data' folder me daal dein.")
+        print("-" * 60)
+        sys.exit(1)
+    input_file = actual_input
+
+    if not os.path.exists(db_path):
+        fallback_db = get_default_db()
+        if os.path.exists(fallback_db):
+            db_path = fallback_db
+        else:
+            print(f"\n[ERROR] Database file '{db_path}' nahi mili!")
+            sys.exit(1)
+
+    if not os.path.exists(model_path):
+        print(f"Error: Model file '{model_path}' not found!")
+        sys.exit(1)
+
+    # 1. Calculate row boundaries
+    print("\nReading input file metadata...")
+    total_file_rows = sum(1 for _ in open(input_file, "r", encoding="utf-8")) - 1
+    print(f"Total rows in {input_file}: {total_file_rows:,}")
+
+    if start_row is None or end_row is None:
+        chunk_size = (total_file_rows + total_parts - 1) // total_parts
+        start_row = (part_num - 1) * chunk_size
+        end_row = min(start_row + chunk_size, total_file_rows)
+
+    part_total = end_row - start_row
+    print(f"This Laptop will process Rows: {start_row:,} to {end_row:,} ({part_total:,} records).")
+
+    # 2. Output file setup
+    os.makedirs(output_dir, exist_ok=True)
+    out_tsv = os.path.join(output_dir, f"matching_results_part_{part_num}_of_{total_parts}.tsv")
+    cand_tsv = os.path.join(output_dir, f"candidate_pairs_part_{part_num}_of_{total_parts}.tsv")
+
+    processed_eids = set()
+    initial_matches = 0
+    if os.path.exists(out_tsv):
+        with open(out_tsv, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+            if len(lines) > 1:
+                for line in lines[1:]:
+                    parts = line.strip().split("\t")
+                    if parts and parts[0]:
+                        processed_eids.add(parts[0])
+                        if len(parts) > 1 and parts[1]:
+                            initial_matches += len(parts[1].split(","))
+        print(f"Resuming: Found {len(processed_eids):,} previously processed records ({initial_matches:,} matches) in {out_tsv}.")
+    else:
+        with open(out_tsv, "w", encoding="utf-8") as f:
+            f.write("source1_entity_id\tmatched_entity_ids\n")
+        with open(cand_tsv, "w", encoding="utf-8") as f:
+            f.write("source1_entity_id\tcandidate_entity_id\n")
+
+    # 3. Stream and process the allocated chunk in parallel batches
+    print(f"\nStarting {workers}-Core Parallel Inference on Part {part_num}/{total_parts}...")
+    t_start = time.time()
+    batch = []
+    current_row_idx = 0
+    total_processed_now = len(processed_eids)
+    total_matches_found = initial_matches
+
+    with ProcessPoolExecutor(max_workers=workers, initializer=init_worker, initargs=(db_path, model_path)) as executor:
+        with open(input_file, "r", encoding="utf-8") as f:
+            header = f.readline().strip().split("\t")
+            eid_idx = header.index("entity_id") if "entity_id" in header else 0
+            name_idx = header.index("business_name") if "business_name" in header else 1
+            addr_idx = header.index("business_address") if "business_address" in header else 2
+            cntry_idx = header.index("country") if "country" in header else 3
+
+            for line in f:
+                if current_row_idx < start_row:
+                    current_row_idx += 1
+                    continue
+                if current_row_idx >= end_row:
+                    break
+
+                current_row_idx += 1
+                fields = line.rstrip("\r\n").split("\t")
+                if len(fields) <= eid_idx: continue
+
+                eid = fields[eid_idx].strip()
+                if eid in processed_eids:
+                    continue
+
+                name = fields[name_idx].strip() if len(fields) > name_idx else ""
+                addr = fields[addr_idx].strip() if len(fields) > addr_idx else ""
+                country = fields[cntry_idx].strip() if len(fields) > cntry_idx else ""
+
+                n_clean = normalize_text(name)
+                n_core = remove_legal_suffixes(n_clean)
+                n_compact = normalize_compact(name)
+                n_core_compact = normalize_compact(n_core)
+                n_sorted = sort_tokens(n_core)
+                a_clean = normalize_text(addr)
+                postal = extract_postal_code(addr, country)
+                nums = extract_numbers(addr)
+
+                rec = {
+                    "entity_id": eid,
+                    "business_name": name,
+                    "business_address": addr,
+                    "country": country,
+                    "name_clean": n_clean,
+                    "name_compact": n_compact,
+                    "name_core_compact": n_core_compact,
+                    "name_no_legal": n_core,
+                    "name_sorted": n_sorted,
+                    "address_clean": a_clean,
+                    "postal_code": postal,
+                    "numbers": nums,
+                    "addr_anchor": extract_addr_anchor(a_clean),
+                    "tok1": extract_tok1(n_clean),
+                    "addr_tok1": extract_addr_tok1(a_clean)
+                }
+                batch.append(rec)
+
+                if len(batch) >= batch_size:
+                    # Divide batch across workers
+                    sub_chunk_size = (len(batch) + workers - 1) // workers
+                    sub_chunks = [batch[i:i + sub_chunk_size] for i in range(0, len(batch), sub_chunk_size)]
+
+                    worker_outputs = list(executor.map(worker_process_chunk, sub_chunks))
+
+                    # Collect results
+                    out_lines = []
+                    cand_lines = []
+                    matches_in_batch = 0
+
+                    for res_list, c_lines in worker_outputs:
+                        for s1_id, m_str in res_list:
+                            out_lines.append(f"{s1_id}\t{m_str}\n")
+                            if m_str:
+                                matches_in_batch += len(m_str.split(","))
+                        cand_lines.extend(c_lines)
+
+                    with open(out_tsv, "a", encoding="utf-8") as f_out:
+                        f_out.writelines(out_lines)
+                    if cand_lines:
+                        with open(cand_tsv, "a", encoding="utf-8") as f_cand:
+                            f_cand.writelines(cand_lines)
+
+                    total_matches_found += matches_in_batch
+                    total_processed_now += len(batch)
+                    elapsed = time.time() - t_start
+                    rate = total_processed_now / elapsed if elapsed > 0 else 0
+                    pct = (total_processed_now / part_total) * 100
+                    rem_sec = (part_total - total_processed_now) / rate if rate > 0 else 0
+                    print(f"[{pct:5.1f}%] Processed {total_processed_now:,}/{part_total:,} | Matches: {total_matches_found:,} | Speed: {rate:.1f} rec/s | ETA: {rem_sec/60:.1f}m")
+                    batch = []
+
+            # Final remaining batch
+            if batch:
+                sub_chunk_size = (len(batch) + workers - 1) // workers
+                sub_chunks = [batch[i:i + sub_chunk_size] for i in range(0, len(batch), sub_chunk_size)]
+                worker_outputs = list(executor.map(worker_process_chunk, sub_chunks))
+
+                out_lines = []
+                cand_lines = []
+                matches_in_batch = 0
+                for res_list, c_lines in worker_outputs:
+                    for s1_id, m_str in res_list:
+                        out_lines.append(f"{s1_id}\t{m_str}\n")
+                        if m_str:
+                            matches_in_batch += len(m_str.split(","))
+                    cand_lines.extend(c_lines)
+
+                with open(out_tsv, "a", encoding="utf-8") as f_out:
+                    f_out.writelines(out_lines)
+                if cand_lines:
+                    with open(cand_tsv, "a", encoding="utf-8") as f_cand:
+                        f_cand.writelines(cand_lines)
+
+                total_matches_found += matches_in_batch
+                total_processed_now += len(batch)
+
+    elapsed_total = time.time() - t_start
+    print("\n" + "=" * 80)
+    print(f"=== PART {part_num}/{total_parts} COMPLETED IN {elapsed_total/60:.1f} MINUTES ===")
+    print(f"  Records Processed: {total_processed_now:,} / {part_total:,}")
+    print(f"  Matches Found:     {total_matches_found:,}")
+    print(f"  Results Saved To:  {out_tsv}")
+    print(f"  Candidates Saved:  {cand_tsv}")
+    print("=" * 80)
 
 def interactive_cli():
     print("=" * 80)
@@ -349,7 +382,7 @@ def interactive_cli():
         model_path="artifacts/models/matcher.joblib",
         part_num=part_num,
         total_parts=total_parts,
-        batch_size=1000
+        batch_size=2000
     )
 
 if __name__ == "__main__":
@@ -359,7 +392,8 @@ if __name__ == "__main__":
     parser.add_argument("--input_file", type=str, default="test_data/test_source1 (1).tsv", help="Path to Source 1 TSV")
     parser.add_argument("--db_path", type=str, default=None, help="Path to indexed SQLite database")
     parser.add_argument("--model_path", type=str, default="artifacts/models/matcher.joblib", help="Path to trained matcher")
-    parser.add_argument("--batch_size", type=int, default=1000, help="Batch size for processing")
+    parser.add_argument("--batch_size", type=int, default=2000, help="Batch size for processing")
+    parser.add_argument("--workers", type=int, default=None, help="Number of parallel CPU worker cores")
     parser.add_argument("--output_dir", type=str, default="output", help="Output directory")
 
     args = parser.parse_args()
@@ -375,5 +409,6 @@ if __name__ == "__main__":
             part_num=args.part,
             total_parts=args.total_parts,
             batch_size=args.batch_size,
+            workers=args.workers,
             output_dir=args.output_dir
         )
