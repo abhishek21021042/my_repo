@@ -22,6 +22,7 @@ train_source2.tsv
 train_source3.tsv
 train_ground_truth.tsv
 artifacts/splits/s1_folds.tsv
+test_data/
 
 # Logs & temp
 *.log
