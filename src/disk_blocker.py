@@ -1,10 +1,14 @@
+import os
 import sqlite3
 import unicodedata
 import re
 from typing import List, Dict, Set, Tuple, Optional
 import time
 
-DEFAULT_DB_PATH = "D:/hackathon/dataset.db"
+DEFAULT_DB_PATH = os.environ.get(
+    "DB_PATH",
+    "D:/hackathon/dataset.db" if os.path.exists("D:/hackathon/dataset.db") else "dataset.db"
+)
 
 LEET_MAP = str.maketrans({'0': 'o', '1': 'l', '3': 'e', '5': 's', '4': 'a', '@': 'a', '$': 's'})
 
