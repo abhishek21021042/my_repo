@@ -71,12 +71,24 @@ def main():
     print(f"  Singleton Accuracy:                {singleton_correct}/{singleton_total} ({singleton_correct/singleton_total*100:.2f}%)")
     print("=" * 80)
 
-    # 4. Show 5 real side-by-side ground truth vs prediction examples
+    # 4. Show real side-by-side ground truth vs prediction examples (India & US)
     print("\nSIDE-BY-SIDE PROOF EXAMPLES (Source 1 vs Matched Records):")
     print("-" * 80)
 
-    sample_check = [s1_id for s1_id in eval_ids if len(pred_dict[s1_id]) > 0][:5]
-    for idx, s1_id in enumerate(sample_check):
+    in_sample = []
+    us_sample = []
+    for s1_id in eval_ids:
+        if len(pred_dict[s1_id]) > 0:
+            cur.execute("SELECT country FROM source1 WHERE entity_id = ?", (s1_id,))
+            c_row = cur.fetchone()
+            if c_row and c_row[0] == "India" and len(in_sample) < 3:
+                in_sample.append(s1_id)
+            elif c_row and c_row[0] == "US" and len(us_sample) < 3:
+                us_sample.append(s1_id)
+            if len(in_sample) >= 3 and len(us_sample) >= 3:
+                break
+
+    for idx, s1_id in enumerate(in_sample + us_sample):
         cur.execute("SELECT business_name, business_address, country FROM source1 WHERE entity_id = ?", (s1_id,))
         s1_row = cur.fetchone()
         s1_name, s1_addr, country = s1_row if s1_row else ("Unknown", "Unknown", "Unknown")
@@ -100,6 +112,7 @@ def main():
             print(f"    --> {m} [{is_valid}]:")
             print(f"        Matched Name:    {c_name}")
             print(f"        Matched Address: {c_addr}")
+
 
     # 5. Show singleton proof (no false merge)
     print("\n" + "-" * 80)
