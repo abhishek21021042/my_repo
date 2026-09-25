@@ -1,0 +1,29 @@
+# Environment & Virtual Env
+.venv/
+env/
+venv/
+ENV/
+
+# Python cache & artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Large Datasets & Database Files (Kept on local D: drive)
+*.tsv
+!artifacts/splits/rapid_eval_s1.tsv
+*.db
+*.sqlite
+*.sqlite3
+train_source1.tsv
+train_source2.tsv
+train_source3.tsv
+train_ground_truth.tsv
+artifacts/splits/s1_folds.tsv
+
+# Logs & temp
+*.log
+scratch/
+.system_generated/

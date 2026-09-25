@@ -1,0 +1,56 @@
+{
+  "train_source1": {
+    "file": "train_source1.tsv",
+    "total_rows": 2206821,
+    "empty_names": 0,
+    "empty_names_pct": 0.0,
+    "empty_addresses": 0,
+    "empty_addresses_pct": 0.0,
+    "empty_countries": 0,
+    "country_distribution": {
+      "US": 1323633,
+      "India": 883188
+    }
+  },
+  "train_source2": {
+    "file": "train_source2.tsv",
+    "total_rows": 5034616,
+    "empty_names": 0,
+    "empty_names_pct": 0.0,
+    "empty_addresses": 168967,
+    "empty_addresses_pct": 3.3561050137686768,
+    "empty_countries": 0,
+    "country_distribution": {
+      "US": 3016817,
+      "India": 2017799
+    }
+  },
+  "train_source3": {
+    "file": "train_source3.tsv",
+    "total_rows": 5285603,
+    "empty_names": 0,
+    "empty_names_pct": 0.0,
+    "empty_addresses": 175916,
+    "empty_addresses_pct": 3.3282106128666875,
+    "empty_countries": 0,
+    "country_distribution": {
+      "US": 3170056,
+      "India": 2115547
+    }
+  },
+  "train_ground_truth": {
+    "file": "train_ground_truth.tsv",
+    "total_s1_ground_truth": 2206821,
+    "s1_coverage_complete": true,
+    "missing_s1_in_gt": 0,
+    "singletons_count": 123247,
+    "singletons_pct": 5.584820880352326,
+    "non_singletons_count": 2083574,
+    "s2_matches_total": 3693619,
+    "s3_matches_total": 3944746,
+    "invalid_matched_ids_count": 0,
+    "duplicate_matches_in_row_count": 0,
+    "matches_per_entity_mean": 3.66599170463828,
+    "matches_per_entity_max": 11
+  }
+}

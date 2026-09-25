@@ -1,0 +1,15 @@
+{
+  "macro_f05": 0.7090344970253517,
+  "macro_precision": 0.83605,
+  "macro_recall": 0.5109948412698412,
+  "singleton_accuracy": 1.0,
+  "singleton_count": 46,
+  "non_singleton_f05": 0.6950047138630521,
+  "total_entities": 1000,
+  "total_candidates": 92401,
+  "candidate_recall": 0.7654075546719682,
+  "pair_precision": 0.9947534102833159,
+  "correct_pairs": 4740,
+  "total_predicted_pairs": 4765,
+  "elapsed_seconds": 67.8
+}
