@@ -4,6 +4,8 @@ import time
 import re
 import pandas as pd
 from typing import List, Tuple
+import sys
+sys.path.insert(0, os.path.abspath("."))
 from src.normalize import (
     normalize_text,
     normalize_compact,
@@ -50,11 +52,11 @@ def extract_addr_tok1(addr_clean: str) -> str:
 
 def process_chunk(df: pd.DataFrame) -> List[tuple]:
     records = []
-    for _, row in df.iterrows():
-        eid = str(row["entity_id"]).strip()
-        name = str(row["business_name"]).strip()
-        addr = str(row["business_address"]).strip()
-        country = str(row["country"]).strip()
+    for row in df.itertuples(index=False):
+        eid = str(row[0]).strip()
+        name = str(row[1]).strip()
+        addr = str(row[2]).strip()
+        country = str(row[3]).strip()
 
         n_clean = normalize_text(name)
         n_core = remove_legal_suffixes(n_clean)
