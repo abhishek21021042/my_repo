@@ -22,8 +22,9 @@ def run_inference(
     db_path: str = DEFAULT_DB_PATH,
     model_path: str = "artifacts/models/matcher.joblib",
     output_dir: str = "output",
-    threshold: float = 0.95,
-    min_margin: float = 0.10,
+    threshold: float = 0.93,
+    strong_addr_threshold: float = 0.89,
+    min_margin: float = 0.05,
     limit: int = None
 ):
     print("=========================================================================")
@@ -176,6 +177,7 @@ def run_inference(
         predictions = apply_precision_first_policy(
             feat_df,
             threshold=threshold,
+            strong_addr_threshold=strong_addr_threshold,
             min_margin=min_margin,
             enable_dual_anchor=True
         )
