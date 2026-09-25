@@ -68,21 +68,22 @@ def main():
     }
 
     # 2. Candidate Retrieval from Source 2 and Source 3
-    print("\n--- STAGE 1: Retrieving Candidates from Source 2 & Source 3 ---")
+    print("\n--- STAGE 1: Retrieving Candidates from Source 2 & Source 3 ---", flush=True)
     t0 = time.time()
-    blocker = DiskBTreeBlocker(DEFAULT_DB_PATH, max_cands_per_query=80)
+    blocker = DiskBTreeBlocker(DEFAULT_DB_PATH, max_cands_per_query=150)
     candidates = blocker.retrieve_candidates(s1_list)
-    print(f"Retrieved {len(candidates):,} candidate pairs in {time.time() - t0:.2f}s.")
+    print(f"Retrieved {len(candidates):,} candidate pairs in {time.time() - t0:.2f}s.", flush=True)
 
     cand_pairs = set((c["source1_entity_id"], c["candidate_entity_id"]) for c in candidates)
     all_true_pairs = set((s1, m) for s1, ms in gt_dict.items() for m in ms)
     captured = len(all_true_pairs & cand_pairs)
-    print(f"Candidate Recall: {captured}/{len(all_true_pairs)} ({captured/len(all_true_pairs)*100:.2f}%)")
+    print(f"Candidate Recall: {captured}/{len(all_true_pairs)} ({captured/len(all_true_pairs)*100:.2f}%)", flush=True)
 
     # 3. Pairwise Feature Engineering
-    print("\n--- STAGE 2: Computing Pairwise Features ---")
+    print("\n--- STAGE 2: Computing Pairwise Features ---", flush=True)
     t0 = time.time()
     feat_rows = []
+
     for c in candidates:
         s1_id = c["source1_entity_id"]
         f_vec = compute_pairwise_features(s1_dict[s1_id], c["cand_record"], c)
