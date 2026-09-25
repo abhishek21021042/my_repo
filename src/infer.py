@@ -18,7 +18,7 @@ from src.decide import apply_precision_first_policy
 from src.write_outputs import write_submission_outputs
 
 def run_inference(
-    s1_path: str = "train_source1.tsv",
+    s1_path: str = "artifacts/splits/rapid_eval_s1.tsv",
     db_path: str = DEFAULT_DB_PATH,
     model_path: str = "artifacts/models/matcher.joblib",
     output_dir: str = "output",
